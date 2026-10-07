@@ -1,5 +1,7 @@
 # Floor by Floor (Prototyp M1–M4)
 
+**Live spielen:** https://sxrg1u.github.io/floor-by-floor/
+
 Satirisches Pixel-Büro-Management-Spiel. Vanilla JavaScript (ES-Module) + HTML5 Canvas, kein Build-Schritt.
 
 ## Starten
