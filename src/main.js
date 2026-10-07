@@ -8,7 +8,7 @@ import { drawWizard } from './ui/wizard.js';
 import { drawGame } from './ui/hud.js';
 import { tick, nightMultiplier } from './sim/tick.js';
 import { clampCam } from './render/camera.js';
-import { sfx } from './audio.js';
+import { sfx, unlockAudio } from './audio.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -19,9 +19,15 @@ window.app = app; // handy for debugging in the console
 
 try { const s = localStorage.getItem('fbf-size'); if (s && SIZES[s]) app.size = s; } catch (e) { /* storage unavailable */ }
 
+canvas.width = W;
+canvas.height = H;
+let lastSize = '';
+
 // Pick a logical resolution so the UI has a comfortable size, then scale it up to fill the window.
 function resize() {
   const iw = window.innerWidth, ih = window.innerHeight;
+  if (!(iw > 0 && ih > 0)) return; // hidden tab or iframe: keep the last resolution
+  lastSize = iw + 'x' + ih;
   let s = ih / SIZES[app.size];
   const si = Math.round(s);
   if (si >= 1 && Math.abs(s - si) / s < 0.15) s = si; // prefer crisp integer scaling when close
@@ -56,6 +62,7 @@ canvas.addEventListener('mousemove', toLocal);
 canvas.addEventListener('mousedown', (e) => {
   toLocal(e);
   canvas.focus();
+  unlockAudio();
   if (e.button === 0) { input.down = true; input.pressed = true; }
   if (e.button === 2) input.rpressed = true;
   if (e.button === 1 || e.button === 2) { input.panDown = true; input.panPressed = true; e.preventDefault(); }
@@ -84,6 +91,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   app.frame++;
+  if (lastSize !== window.innerWidth + 'x' + window.innerHeight) resize();
 
   const g = app.game;
   if (app.scene === 'game' && g && !g.paused && !g.modal) {

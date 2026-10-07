@@ -1,9 +1,11 @@
-// M5: traits, opinions, relationships, chats, cliques, crushes, dating, gossip and drama events.
+// M5: traits, opinions, relationships, chats, cliques, crushes, dating and gossip.
+// Decisions are pushed as plain-data events (see systems/events.js) so they survive saving.
 import { DATA } from '../data.js';
 import { clock } from './time.js';
-import { pickJob } from '../systems/jobs.js';
 import { toast } from '../systems/notify.js';
-import { sfx } from '../audio.js';
+import { pushEvent } from '../systems/events.js';
+import { teamOf } from '../systems/teams.js';
+import { is } from '../systems/policies.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const rint = (n) => Math.floor(Math.random() * n);
@@ -51,10 +53,9 @@ export function buildMods(traitIds = []) {
 // ---------- relationships ----------
 const key = (a, b) => (a < b ? a + '-' + b : b + '-' + a);
 export const rel = (g, a, b) => g.rel[key(a.id, b.id)] || 0;
-export function addRel(g, a, b, d) { const k = key(a.id, b.id); g.rel[k] = clamp((g.rel[k] || 0) + d, -100, 100); }
+export function addRel(g, a, b, d) { if (!a || !b) return; const k = key(a.id, b.id); g.rel[k] = clamp((g.rel[k] || 0) + d, -100, 100); }
 export function setRel(g, a, b, v) { g.rel[key(a.id, b.id)] = clamp(v, -100, 100); }
 
-// Opinion similarity, -2 (opposites) .. +2 (identical).
 export function compat(a, b) {
   if (!a.opinions || !b.opinions) return 0;
   let s = 0;
@@ -81,6 +82,7 @@ export function relationsOf(g, a) {
 }
 
 export const boss = (g) => g.agents.find((a) => a.isPlayer);
+export const byId = (g, id) => g.agents.find((a) => a.id === id);
 
 export function initRelations(g, a) {
   for (const b of g.agents) {
@@ -106,26 +108,28 @@ function faceDir(p, q) {
   return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
 }
 
-export function tryChat(a, g) {
-  if (a.needs.social > 75 || Math.random() > 0.2) return false;
+export function tryChat(a, g, force = false) {
+  if (!force && (a.needs.social > 75 || Math.random() > 0.25)) return false;
   const free = (b) => b.state === 'idle' || (b.state === 'walking' && b.target && b.target.type === 'wander');
-  const cands = g.agents.filter((b) => b !== a && b.present && free(b) && Math.abs(b.x - a.x) + Math.abs(b.y - a.y) <= 4);
+  const cands = g.agents.filter((b) => b !== a && b.present && b.floor === a.floor && free(b) && Math.abs(b.x - a.x) + Math.abs(b.y - a.y) <= 5);
   if (!cands.length) return false;
   const b = pick(cands);
   const r = rel(g, a, b);
   const kind = a.partner === b.id ? 'pink' : r >= 25 ? 'green' : r <= -15 ? 'red' : 'blue';
+  const len = is(g, 'layout', 'open') ? 16 : 12;
   for (const [p, q] of [[a, b], [b, a]]) {
-    p.state = 'chatting'; p.path = []; p.target = null; p.timer = 12; p.chatWith = q.id;
+    p.state = 'chatting'; p.path = []; p.target = null; p.timer = len; p.chatWith = q.id;
     p.dir = faceDir(p, q);
-    p.activity = (q.isPlayer ? 'Talking to the boss' : 'Chatting with ' + fname(q));
-    p.bubble = { icon: 'chat', kind, t: 12 };
+    p.activity = q.isPlayer ? 'Talking to the boss' : 'Chatting with ' + fname(q);
+    p.bubble = { icon: 'chat', kind, t: len };
   }
   return true;
 }
 
 export function chatting(a, g) {
-  const b = g.agents.find((x) => x.id === a.chatWith);
+  const b = byId(g, a.chatWith);
   a.needs.social = clamp(a.needs.social + 2.2, 0, 100);
+  a.needs.fun = clamp(a.needs.fun + 0.4, 0, 100);
   if (!b || !b.present || b.state !== 'chatting' || b.chatWith !== a.id) { a.state = 'idle'; a.chatWith = null; return; }
   if (--a.timer <= 0) {
     if (a.id < b.id) interact(g, a, b);
@@ -154,7 +158,7 @@ export function socialHour(g) {
     let m = 0;
     if (!a.isPlayer) {
       for (const b of present) {
-        if (b === a || b.isPlayer) continue;
+        if (b === a || b.isPlayer || b.floor !== a.floor) continue;
         if (a.partner === b.id) m += 8;
         else { const r = rel(g, a, b); if (r >= FRIEND) m += 3; else if (r <= RIVAL) m -= 4; }
       }
@@ -167,87 +171,42 @@ export function socialHour(g) {
     if ((g.dramaUntil || 0) > day) m -= 4;
     a.socialMood = m;
   }
-  // chemistry on shared jobs
-  const workers = present.filter((a) => a.state === 'working');
-  const jobOf = new Map(workers.map((a) => [a, pickJob(a, g)]));
-  for (const a of workers) {
-    let c = 1;
-    const j = jobOf.get(a);
-    if (j && !a.isPlayer) {
+  // chemistry inside teams: friends speed each other up, rivals slow each other down
+  for (const t of g.teams) {
+    const mem = t.members.map((id) => byId(g, id)).filter(Boolean);
+    for (const a of mem) {
       let fr = 0, rv = 0;
-      for (const b of workers) {
-        if (b === a || b.isPlayer || jobOf.get(b) !== j) continue;
+      for (const b of mem) {
+        if (b === a) continue;
         const r = rel(g, a, b);
         if (r >= FRIEND || a.partner === b.id) fr++; else if (r <= RIVAL) rv++;
       }
-      c = clamp(1 + 0.05 * Math.min(3, fr) - 0.08 * rv, 0.75, 1.15);
+      a.chem = clamp(1 + 0.05 * Math.min(3, fr) - 0.08 * rv, 0.75, 1.15);
     }
-    a.chem = c;
   }
+  for (const a of g.agents) if (!teamOf(g, a)) a.chem = 1;
   // neighbors at desks slowly bond (or annoy each other)
+  const workers = present.filter((a) => a.state === 'working' && !a.isPlayer);
   for (let i = 0; i < workers.length; i++) for (let k = i + 1; k < workers.length; k++) {
     const a = workers[i], b = workers[k];
-    if (a.isPlayer || b.isPlayer) continue;
-    if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) <= 3) addRel(g, a, b, (0.3 + compat(a, b) * 0.4) * a.mods.rel * b.mods.rel);
+    if (a.floor === b.floor && Math.abs(a.x - b.x) + Math.abs(a.y - b.y) <= 3) addRel(g, a, b, (0.3 + compat(a, b) * 0.4) * a.mods.rel * b.mods.rel);
   }
 }
 
-// ---------- events ----------
-export function pushEvent(g, ev) { g.events.push(ev); }
-
+// ---------- daily drama ----------
 const RUMORS = ['is interviewing at a competitor.', 'microwaves fish on purpose.', 'wrote a poem about synergy.', 'earns twice as much as everyone.',
   'has a secret second career as a DJ.', 'took the last yogurt. Again.', 'uses Comic Sans in client decks.', 'reply-alls on purpose.'];
 const BOSS_RUMORS = ['is planning layoffs.', 'has never read a single report.', 'takes three-hour lunches.', 'still uses Internet Explorer.'];
 const CLIQUE_NAMES = ['The Fridge Council', 'Team Espresso', 'The Lunch Table', 'Spreadsheet Society', 'The Back Row', 'Club Synergy', 'The Cooler Crew', 'Friday Committee'];
 
-function staffOf(g) { return g.agents.filter((a) => !a.isPlayer); }
+const staffOf = (g) => g.agents.filter((a) => !a.isPlayer);
 
-function moveDesksApart(g, a, b) {
-  const da = g.furnById[a.desk], db = g.furnById[b.desk];
-  if (!da || !db) return;
-  let best = null, bd = -1;
-  for (const c of staffOf(g)) {
-    if (c === a || c === b || c.desk == null) continue;
-    const dc = g.furnById[c.desk];
-    const d = Math.abs(dc.x - da.x) + Math.abs(dc.y - da.y);
-    if (d > bd) { bd = d; best = c; }
-  }
-  if (best && bd > Math.abs(db.x - da.x) + Math.abs(db.y - da.y)) {
-    const t = best.desk; best.desk = b.desk; b.desk = t;
-    for (const p of [b, best]) if (p.state === 'working') p.state = 'idle';
-  }
-}
-
-function startDating(g, a, b) {
-  a.partner = b.id; b.partner = a.id; a.crush = null; b.crush = null;
-  const bo = boss(g);
-  pushEvent(g, {
-    title: 'Office romance',
-    text: `${fname(a)} and ${fname(b)} are officially dating. They told everyone at the water cooler. Twice.`,
-    options: [
-      { label: 'Congratulate them', tip: 'Both like you a bit more.', run: () => { addRel(g, a, bo, 8); addRel(g, b, bo, 8); } },
-      { label: 'Remind them about "professional conduct"', tip: 'Both like you a bit less.', run: () => { addRel(g, a, bo, -6); addRel(g, b, bo, -6); } },
-      { label: 'Say nothing', tip: 'Love is in the air. And in the Slack channel.', run: () => {} },
-    ],
-  });
-  sfx('hire');
-}
-
-function breakup(g, a, b, day) {
+export function breakup(g, a, b, day) {
   a.partner = null; b.partner = null;
   setRel(g, a, b, -40);
   a.heartbreak = day + 4; b.heartbreak = day + 4;
   g.dramaUntil = day + 3;
-  pushEvent(g, {
-    title: 'The breakup',
-    text: `${fname(a)} and ${fname(b)} broke up. Next to the coffee machine. During lunch. The whole floor felt it.`,
-    options: [
-      { label: 'Move their desks apart', tip: 'Swaps desks so they sit far from each other. The drama fades faster.', run: () => { moveDesksApart(g, a, b); g.dramaUntil = day + 1; } },
-      { label: 'Give them both a day off', tip: 'They stay home tomorrow and heal faster.', run: () => { a.dayOff = day; b.dayOff = day; a.heartbreak = day + 2; b.heartbreak = day + 2; } },
-      { label: 'Business as usual', tip: 'Everybody is sad for a few days.', run: () => {} },
-    ],
-  });
-  sfx('bad');
+  pushEvent(g, 'breakup', { a: a.id, b: b.id });
 }
 
 function romance(g, day) {
@@ -262,7 +221,11 @@ function romance(g, day) {
       continue;
     }
     if (a.partner || b.partner) continue;
-    if ((a.crush === b.id || b.crush === a.id) && r >= 80 && Math.random() < 0.3) { startDating(g, a, b); continue; }
+    if ((a.crush === b.id || b.crush === a.id) && r >= 80 && Math.random() < 0.3) {
+      a.partner = b.id; b.partner = a.id; a.crush = null; b.crush = null;
+      pushEvent(g, 'romance', { a: a.id, b: b.id });
+      continue;
+    }
     if (r >= 65 && !a.crush && !b.crush && Math.random() < 0.12) {
       const [p, q] = Math.random() < 0.5 ? [a, b] : [b, a];
       p.crush = q.id;
@@ -273,31 +236,23 @@ function romance(g, day) {
   }
 }
 
-function rivals(g, day) {
+function rivals(g) {
   const staff = staffOf(g);
-  const bo = boss(g);
   let argued = false;
   for (let i = 0; i < staff.length; i++) for (let k = i + 1; k < staff.length; k++) {
     const a = staff[i], b = staff[k];
     if (rel(g, a, b) > RIVAL) continue;
-    const job = g.jobs.find((j) => !j.team || (j.team.includes(a.id) && j.team.includes(b.id)));
-    if (job && Math.random() < 0.15) {
-      const [p, q] = Math.random() < 0.5 ? [a, b] : [b, a];
-      job.done = Math.max(0, job.done - job.workload * 0.05);
-      toast(g, `${fname(p)} "accidentally" deleted ${fname(q)}'s files. ${job.name} lost 5%.`, 'red');
+    const ta = teamOf(g, a);
+    if (ta && ta === teamOf(g, b) && Math.random() < 0.15) {
+      const job = g.jobs.find((j) => j.team === ta.id && j.parts.some((p) => p.done < p.work));
+      if (job) {
+        const part = job.parts.find((p) => p.done < p.work);
+        const [p, q] = Math.random() < 0.5 ? [a, b] : [b, a];
+        part.done = Math.max(0, part.done - part.work * 0.08);
+        toast(g, `${fname(p)} "accidentally" deleted ${fname(q)}'s files. ${job.name} lost progress.`, 'red');
+      }
     }
-    if (!argued && Math.random() < 0.12) {
-      argued = true;
-      pushEvent(g, {
-        title: 'Thermostat war',
-        text: `${fname(a)} and ${fname(b)} are arguing about the thermostat. Loudly. In front of a client.`,
-        options: [
-          { label: `Side with ${fname(a)}`, tip: `${fname(a)} likes you more, ${fname(b)} less.`, run: () => { addRel(g, a, bo, 10); addRel(g, b, bo, -10); addRel(g, a, b, -5); } },
-          { label: `Side with ${fname(b)}`, tip: `${fname(b)} likes you more, ${fname(a)} less.`, run: () => { addRel(g, b, bo, 10); addRel(g, a, bo, -10); addRel(g, a, b, -5); } },
-          { label: 'Buy a second thermostat ($200)', tip: 'Peace through hardware. They warm up to each other.', run: () => { g.money -= 200; g.month.building += 200; addRel(g, a, b, 15); } },
-        ],
-      });
-    }
+    if (!argued && Math.random() < 0.12) { argued = true; pushEvent(g, 'thermostat', { a: a.id, b: b.id }); }
   }
 }
 
@@ -312,23 +267,14 @@ function gossip(g, day) {
     const victim = aboutBoss ? bo : pick(others);
     const listener = pick(others.filter((x) => x !== victim));
     const rumor = pick(aboutBoss ? BOSS_RUMORS : RUMORS);
-    const vName = aboutBoss ? 'the boss' : fname(victim);
     addRel(g, listener, victim, -6 * listener.mods.rel);
     addRel(g, G, listener, 3);
     if (!aboutBoss) addRel(g, G, victim, -3);
     if (Math.random() < 0.2 && !g.events.length && day - (g.lastRumorEvent || -99) >= 5) {
       g.lastRumorEvent = day;
-      pushEvent(g, {
-        title: 'Rumor mill',
-        text: `${fname(G)} has been telling everyone that ${vName} ${rumor}`,
-        options: [
-          { label: 'Clear the air at the cooler', tip: `Takes the sting out. ${fname(G)} likes you less.`, run: () => { for (const x of staff) if (x !== victim) addRel(g, x, victim, 4); addRel(g, G, bo, -5); } },
-          { label: `Ask ${fname(G)} to stop`, tip: `No gossip for a week. ${fname(G)} is not happy about it.`, run: () => { G.gossipCool = day + 5; addRel(g, G, bo, -10); G.needs.stress = Math.min(100, G.needs.stress + 20); } },
-          { label: 'Ignore it', tip: `Everyone thinks a little less of ${vName}.`, run: () => { for (const x of staff) if (x !== victim && x !== G) addRel(g, x, victim, -3); } },
-        ],
-      });
+      pushEvent(g, 'rumor', { g: G.id, v: victim.id, rumor });
     } else {
-      toast(g, `${fname(G)} told ${fname(listener)} that ${vName} ${rumor}`, 'yellow');
+      toast(g, `${fname(G)} told ${fname(listener)} that ${aboutBoss ? 'the boss' : fname(victim)} ${rumor}`, 'yellow');
     }
   }
 }
@@ -358,7 +304,7 @@ function updateCliques(g) {
       const used = new Set([...old, ...next].map((c) => c.name));
       const name = CLIQUE_NAMES.find((n) => !used.has(n)) || 'The Other Clique';
       next.push({ name, members });
-      const names = members.map((id) => fname(g.agents.find((x) => x.id === id)));
+      const names = members.map((id) => fname(byId(g, id)));
       toast(g, `${names.slice(0, -1).join(', ')} and ${names.at(-1)} now eat lunch together. They call themselves "${name}".`, 'green');
     }
   }
@@ -382,18 +328,19 @@ export function socialDay(g) {
   reveals(g);
   updateCliques(g);
   romance(g, day);
-  rivals(g, day);
+  rivals(g);
   gossip(g, day);
 }
 
-export function onFired(g, a) {
+// Everyone close to a person who leaves reacts to it.
+export function onLeaving(g, a, fired) {
   const bo = boss(g);
   const upset = [];
   for (const b of staffOf(g)) {
     if (b === a) continue;
-    if (b.partner === a.id) { b.partner = null; b.heartbreak = clock(g.time).day + 4; upset.push(b); addRel(g, b, bo, -30); }
-    else if (rel(g, a, b) >= FRIEND) { upset.push(b); addRel(g, b, bo, -12); }
+    if (b.partner === a.id) { b.partner = null; b.heartbreak = clock(g.time).day + 4; upset.push(b); if (fired) addRel(g, b, bo, -30); }
+    else if (rel(g, a, b) >= FRIEND) { upset.push(b); if (fired) addRel(g, b, bo, -12); b.loyalty = Math.max(0, b.loyalty - (fired ? 8 : 5)); }
     if (b.crush === a.id) b.crush = null;
   }
-  if (upset.length) toast(g, `${upset.map(fname).join(' and ')} ${upset.length > 1 ? 'are' : 'is'} upset that you fired ${fname(a)}.`, 'red');
+  if (upset.length) toast(g, `${upset.map(fname).join(' and ')} ${upset.length > 1 ? 'are' : 'is'} upset that ${fname(a)} is gone.`, 'red');
 }

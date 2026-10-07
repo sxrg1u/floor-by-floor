@@ -6,6 +6,57 @@ const last = {};
 export function setSound(v) { enabled = v; }
 export function soundOn() { return enabled; }
 
+// ---------- chiptune music: a tiny step sequencer ----------
+// Notes are MIDI numbers, one per eighth note; null = rest.
+const SONGS = {
+  office: {
+    bpm: 96,
+    lead: [72, null, 76, null, 79, null, 76, null, 74, null, 77, null, 81, null, 77, null, 72, null, 76, null, 79, null, 84, null, 83, null, 79, null, 77, 76, 74, null],
+    bass: [48, null, null, null, 55, null, null, null, 50, null, null, null, 53, null, null, null, 48, null, null, null, 55, null, null, null, 55, null, null, null, 43, null, null, null],
+  },
+  tense: {
+    bpm: 120,
+    lead: [69, null, 72, 69, 76, null, 74, 72, 71, null, 74, 71, 77, null, 76, 74, 69, null, 72, 69, 76, null, 79, 77, 76, 74, 72, 71, 69, null, null, null],
+    bass: [45, null, 45, null, 45, null, 45, null, 43, null, 43, null, 43, null, 43, null, 41, null, 41, null, 41, null, 41, null, 40, null, 40, null, 44, null, 44, null],
+  },
+};
+let musicOn = true;
+let song = null;
+let stepIdx = 0;
+let nextTime = 0;
+let timer = null;
+const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+function scheduler() {
+  if (!ac || !song || !musicOn) return;
+  const s = SONGS[song];
+  const stepLen = 60 / s.bpm / 2;
+  while (nextTime < ac.currentTime + 0.12) {
+    const i = stepIdx % s.lead.length;
+    const delay = Math.max(0, nextTime - ac.currentTime);
+    if (s.lead[i] != null) tone(hz(s.lead[i]), stepLen * 0.9, 'square', 0.012, 0, delay);
+    if (s.bass[i] != null) tone(hz(s.bass[i]), stepLen * 3.5, 'triangle', 0.035, 0, delay);
+    stepIdx++;
+    nextTime += stepLen;
+  }
+}
+
+export function setMusic(name) {
+  if (name === song) return;
+  song = name;
+  stepIdx = 0;
+  if (!ac) return;
+  nextTime = ac.currentTime + 0.05;
+}
+export function setMusicOn(v) { musicOn = v; }
+export function musicEnabled() { return musicOn; }
+
+// Browsers only allow audio after a user gesture: call this from the first click.
+export function unlockAudio() {
+  actx();
+  if (!timer) { nextTime = ac.currentTime + 0.1; timer = setInterval(scheduler, 30); }
+}
+
 function actx() {
   if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
   if (ac.state === 'suspended') ac.resume();

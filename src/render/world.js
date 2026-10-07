@@ -1,4 +1,4 @@
-// Draws the office floor into an offscreen world canvas (tiles, furniture, people, day/night),
+// Draws the viewed floor into an offscreen world canvas (tiles, furniture, people, day/night),
 // then blits it through the camera. Also handles map input: select, pan, zoom, build tools.
 import { C, KIND, TILE, MAP_W, MAP_H, SPAWN, WORLD_PAD, VIEW } from '../config.js';
 import { DATA } from '../data.js';
@@ -8,9 +8,10 @@ import { cam, camPos, clampCam, tileAt, toScreen, zoomAt, WORLD_PX_W, WORLD_PX_H
 import { clock, darkness } from '../sim/time.js';
 import { input, worldFree, takeClick, setTooltip, ui } from '../ui/ui.js';
 import {
-  canPlace, placeFurniture, furnitureAt, sellFurniture, wallLine, canWall, buildWalls, canDoor, makeDoor,
-  canRemoveWall, removeWall, WALL_COST,
+  flc, canPlace, placeFurniture, furnitureAt, sellFurniture, wallLine, canWall, buildWalls, canDoor, makeDoor,
+  canRemoveWall, removeWall, WALL_COST, lockReason,
 } from '../systems/building.js';
+import { teamOf } from '../systems/teams.js';
 import { fmtMoney } from '../systems/economy.js';
 import { toast } from '../systems/notify.js';
 import { sfx } from '../audio.js';
@@ -18,7 +19,7 @@ import { isHl } from '../systems/tutorial.js';
 
 const PX = (tx) => tx * TILE;
 const PY = (ty) => ty * TILE + WORLD_PAD;
-const isWallish = (g, x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && (g.tiles[y][x] === 'W' || g.tiles[y][x] === 'E');
+const isWallish = (tiles, x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && (tiles[y][x] === 'W' || tiles[y][x] === 'E');
 
 let worldCanvas = null;
 function getWorldCanvas() {
@@ -30,29 +31,27 @@ function getWorldCanvas() {
   return worldCanvas;
 }
 
-function buildStatic(g) {
-  const c = g.staticCanvas || (g.staticCanvas = document.createElement('canvas'));
+function buildStatic(g, i) {
+  const cache = flc(g, i);
+  const tiles = g.floors[i].tiles;
+  const c = cache.staticCanvas || (cache.staticCanvas = document.createElement('canvas'));
   c.width = MAP_W * TILE; c.height = MAP_H * TILE;
   const x2 = c.getContext('2d');
   const r = (x, y, w, h, col) => { x2.fillStyle = col; x2.fillRect(x, y, w, h); };
   for (let ty = 0; ty < MAP_H; ty++) {
     for (let tx = 0; tx < MAP_W; tx++) {
-      const t = g.tiles[ty][tx];
+      const t = tiles[ty][tx];
       const X = tx * TILE, Y = ty * TILE;
       if (t === '.' || t === 'D') r(X, Y, 16, 16, (tx + ty) & 1 ? C.floorB : C.floorA);
-      if (t === 'L') {
-        r(X, Y, 16, 16, C.locked);
-        for (let i = 0; i < 16; i++) for (let j = 0; j < 16; j++) if ((X + i + Y + j) % 6 === 0) r(X + i, Y + j, 1, 1, C.lockedLine);
-      }
       if (t === 'W') {
-        const below = ty + 1 < MAP_H ? g.tiles[ty + 1][tx] : 'W';
+        const below = ty + 1 < MAP_H ? tiles[ty + 1][tx] : 'W';
         const face = below !== 'W' && below !== 'E';
         const fh = ty === 0 ? 10 : 6;
         r(X, Y, 16, 16, C.wallTop);
         if (face) { r(X, Y + 16 - fh, 16, fh, C.wallFace); r(X, Y + 16 - fh, 16, 1, C.wallEdge); r(X, Y + 15, 16, 1, C.wallLine); }
       }
       if (t === 'D') {
-        const horiz = isWallish(g, tx - 1, ty) || isWallish(g, tx + 1, ty);
+        const horiz = isWallish(tiles, tx - 1, ty) || isWallish(tiles, tx + 1, ty);
         if (horiz) { r(X, Y, 2, 16, C.wallTop); r(X + 14, Y, 2, 16, C.wallTop); r(X + 2, Y + 7, 12, 2, C.wallFace); }
         else { r(X, Y, 16, 2, C.wallTop); r(X, Y + 14, 16, 2, C.wallTop); r(X + 7, Y + 2, 2, 12, C.wallFace); }
       }
@@ -63,19 +62,12 @@ function buildStatic(g) {
       }
     }
   }
-  g.staticDirty = false;
-}
-
-function lockedCenter(g) {
-  let minx = 99, miny = 99, maxx = -1, maxy = -1;
-  for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) if (g.tiles[y][x] === 'L') {
-    if (x < minx) minx = x; if (y < miny) miny = y; if (x > maxx) maxx = x; if (y > maxy) maxy = y;
-  }
-  return maxx < 0 ? null : { x: (minx + maxx + 1) / 2, y: (miny + maxy + 1) / 2 };
+  cache.staticDirty = false;
 }
 
 const overView = () => { const v = VIEW(); return input.x >= v.x && input.y >= v.y && input.x < v.x + v.w && input.y < v.y + v.h; };
 const inMap = (t) => t.x >= 0 && t.y >= 0 && t.x < MAP_W && t.y < MAP_H;
+const visible = (g, a) => a.present && a.floor === g.view && a.state !== 'elevator';
 
 // World-canvas position of an agent sprite (top-left).
 export function agentWorld(a, alpha) {
@@ -90,19 +82,20 @@ export function agentScreen(g, a, alpha) {
   return { x: s.x, y: s.y, z: cam(g).z };
 }
 
+function toWorldPoint(g) {
+  const c = camPos(g), v = VIEW();
+  return { x: c.x + (input.x - v.x) / c.z, y: c.y + (input.y - v.y) / c.z };
+}
+
 function agentAt(g, alpha) {
   const t = toWorldPoint(g);
   let best = null, by = -1;
   for (const a of g.agents) {
-    if (!a.present) continue;
+    if (!visible(g, a)) continue;
     const s = agentWorld(a, alpha);
     if (t.x >= s.x + 3 && t.x < s.x + 13 && t.y >= s.y && t.y < s.y + 16 && s.iy > by) { best = a; by = s.iy; }
   }
   return best;
-}
-function toWorldPoint(g) {
-  const c = camPos(g), v = VIEW();
-  return { x: c.x + (input.x - v.x) / c.z, y: c.y + (input.y - v.y) / c.z };
 }
 
 function startPan(g, left) {
@@ -112,8 +105,8 @@ function startPan(g, left) {
 
 export function handleWorld(app) {
   const g = app.game;
+  const fl = g.view;
   cam(g);
-  // ongoing camera drag
   if (g.panDrag) {
     const p = g.panDrag;
     if (input.down || input.panDown) {
@@ -145,26 +138,26 @@ export function handleWorld(app) {
   if (tool.kind === 'furn') {
     const def = DATA.furnById[tool.id];
     if (takeClick()) {
-      const r = placeFurniture(g, tool.id, t.x, t.y);
+      const r = placeFurniture(g, fl, tool.id, t.x, t.y);
       if (r === 'ok') sfx('place');
-      else { sfx('error'); if (r === 'money') toast(g, `Not enough money for ${def.name}.`, 'red'); }
+      else { sfx('error'); if (r === 'money') toast(g, `Not enough money for ${def.name}.`, 'red'); if (r === 'locked') toast(g, lockReason(def), 'yellow'); }
     }
   } else if (tool.kind === 'wall') {
     if (takeClick()) g.drag = { x: t.x, y: t.y };
     if (input.released && g.drag) {
-      const n = buildWalls(g, wallLine(g.drag.x, g.drag.y, t.x, t.y));
+      const n = buildWalls(g, fl, wallLine(g.drag.x, g.drag.y, t.x, t.y));
       g.drag = null;
       sfx(n ? 'place' : 'error');
     }
   } else if (tool.kind === 'door') {
-    if (takeClick()) sfx(makeDoor(g, t.x, t.y) ? 'place' : 'error');
+    if (takeClick()) sfx(makeDoor(g, fl, t.x, t.y) ? 'place' : 'error');
   } else if (tool.kind === 'sell') {
-    const f = furnitureAt(g, t.x, t.y);
+    const f = furnitureAt(g, fl, t.x, t.y);
     if (f) setTooltip(`Sell ${DATA.furnById[f.type].name} for ${fmtMoney(Math.floor(DATA.furnById[f.type].price / 2))}`);
-    else if (canRemoveWall(g, t.x, t.y)) setTooltip('Remove wall');
+    else if (canRemoveWall(g, fl, t.x, t.y)) setTooltip('Remove wall');
     if (takeClick()) {
       if (f) { sellFurniture(g, f); sfx('sell'); }
-      else if (removeWall(g, t.x, t.y)) sfx('sell');
+      else if (removeWall(g, fl, t.x, t.y)) sfx('sell');
       else sfx('error');
     }
   }
@@ -172,6 +165,7 @@ export function handleWorld(app) {
 
 function drawGhost(app, ctx) {
   const g = app.game;
+  const fl = g.view;
   const tool = g.tool;
   if (!tool || !overView() || !worldFree() || g.panDrag) return;
   const t = tileAt(g, input.x, input.y);
@@ -182,25 +176,25 @@ function drawGhost(app, ctx) {
   };
   if (tool.kind === 'furn') {
     const def = DATA.furnById[tool.id];
-    const ok = canPlace(g, def, t.x, t.y) && g.money >= def.price;
+    const ok = canPlace(g, fl, def, t.x, t.y) && g.money >= def.price;
     for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) mark(t.x + x, t.y + y, ok);
     if (def.seat) mark(t.x + def.seat[0], t.y + def.seat[1], ok);
     ctx.globalAlpha = 0.75;
     ctx.drawImage(furnSprite(def.id, def.w, def.h, g.color), PX(t.x), PY(t.y) - SPRITE_OY);
     if (def.seat) ctx.drawImage(chairSprite(), PX(t.x + def.seat[0]), PY(t.y + def.seat[1]) - SPRITE_OY);
     ctx.globalAlpha = 1;
-    if (!ok) setTooltip(g.money < def.price ? 'Not enough money' : 'Does not fit here. Needs free floor, desks also need room for the chair below.');
+    if (!ok) setTooltip(g.money < def.price ? 'Not enough money' : 'Does not fit here. Needs free floor; desks also need room for the chair below.');
   } else if (tool.kind === 'wall') {
     const line = g.drag ? wallLine(g.drag.x, g.drag.y, t.x, t.y) : [t];
-    for (const p of line) mark(p.x, p.y, canWall(g, p.x, p.y));
+    for (const p of line) mark(p.x, p.y, canWall(g, fl, p.x, p.y));
     if (g.drag) {
-      const n = line.filter((p) => canWall(g, p.x, p.y)).length;
+      const n = line.filter((p) => canWall(g, fl, p.x, p.y)).length;
       setTooltip(`${n} wall tiles · ${fmtMoney(n * WALL_COST)}`);
     }
   } else if (tool.kind === 'door') {
-    mark(t.x, t.y, canDoor(g, t.x, t.y));
+    mark(t.x, t.y, canDoor(g, fl, t.x, t.y));
   } else if (tool.kind === 'sell') {
-    const f = furnitureAt(g, t.x, t.y);
+    const f = furnitureAt(g, fl, t.x, t.y);
     if (f) {
       const d = DATA.furnById[f.type];
       for (let y = 0; y < d.h; y++) for (let x = 0; x < d.w; x++) mark(f.x + x, f.y + y, false);
@@ -210,16 +204,19 @@ function drawGhost(app, ctx) {
 
 function drawScene(app, ctx) {
   const g = app.game;
+  const fl = g.view;
   const alpha = app.alpha;
+  const tiles = g.floors[fl].tiles;
   ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, WORLD_PX_W, WORLD_PX_H);
-  if (g.staticDirty || !g.staticCanvas) buildStatic(g);
-  ctx.drawImage(g.staticCanvas, 0, WORLD_PAD);
+  const cache = flc(g, fl);
+  if (cache.staticDirty || !cache.staticCanvas) buildStatic(g, fl);
+  ctx.drawImage(cache.staticCanvas, 0, WORLD_PAD);
   const c = clock(g.time);
   const dark = darkness(c.hour);
 
   for (let tx = 1; tx < MAP_W - 1; tx++) {
-    if (tx % 3 !== 1 || g.tiles[1][tx] === 'W') continue;
+    if (tx % 3 !== 1 || tiles[1][tx] === 'W') continue;
     const X = PX(tx), Y = PY(0);
     D.rect(X + 3, Y + 8, 10, 6, dark > 0.25 ? '#33404E' : '#E1F3FE');
     D.rect(X + 3, Y + 8, 10, 1, dark > 0.25 ? '#2A3542' : '#F2FAFF');
@@ -233,29 +230,21 @@ function drawScene(app, ctx) {
     ctx.globalAlpha = 1;
   }
 
-  const lc = lockedCenter(g);
-  if (lc) {
-    const s = 'FOR RENT';
-    const w = D.tw(s) + 12;
-    const x = Math.round(PX(lc.x) - w / 2), y = Math.round(PY(lc.y) - 8);
-    D.card(x, y, w, 15, C.surface, C.border);
-    D.text(s, x + 6, y + 4, C.muted);
-  }
-
-  for (const f of g.furniture) {
+  const furn = g.furniture.filter((f) => f.floor === fl);
+  for (const f of furn) {
     const d = DATA.furnById[f.type];
     if (d.walkable) ctx.drawImage(furnSprite(d.id, d.w, d.h, g.color), PX(f.x), PY(f.y) - SPRITE_OY);
   }
 
   const ents = [];
-  for (const f of g.furniture) {
+  for (const f of furn) {
     const d = DATA.furnById[f.type];
     if (d.walkable) continue;
     ents.push({ z: f.y + d.h - 1, k: 0, f, d });
     if (d.seat) ents.push({ z: f.y + d.seat[1], k: 0, chair: true, x: f.x + d.seat[0], y: f.y + d.seat[1] });
   }
-  for (const a of g.agents) {
-    if (!a.present) continue;
+  const shown = g.agents.filter((a) => visible(g, a));
+  for (const a of shown) {
     const s = agentWorld(a, alpha);
     ents.push({ z: s.iy + (s.seated ? 0.3 : 0.1), k: 1, a, s });
   }
@@ -280,7 +269,7 @@ function drawScene(app, ctx) {
     ctx.globalAlpha = dark;
     D.rect(0, PY(0), MAP_W * TILE, MAP_H * TILE, C.night);
     ctx.globalAlpha = 1;
-    for (const f of g.furniture) {
+    for (const f of furn) {
       const d = DATA.furnById[f.type];
       if (!d.light) continue;
       ctx.globalAlpha = dark * 0.5;
@@ -289,15 +278,14 @@ function drawScene(app, ctx) {
       ctx.globalAlpha = 1;
       D.rect(PX(f.x) + 4, PY(f.y) - 8, 8, 6, '#FBF3DB');
     }
-    for (const a of g.agents) {
-      if (!a.present || a.state !== 'working' || a.desk == null) continue;
+    for (const a of shown) {
+      if (a.state !== 'working' || a.desk == null) continue;
       const f = g.furnById[a.desk];
       for (const r of SCREENS[f.type] || []) D.rect(PX(f.x) + r[0], PY(f.y) + r[1], r[2], r[3], '#BFDDEE');
     }
   }
 
-  for (const a of g.agents) {
-    if (!a.present) continue;
+  for (const a of shown) {
     const s = agentWorld(a, alpha);
     let top = s.y - 2;
     if (a.bubble) {
@@ -310,14 +298,16 @@ function drawScene(app, ctx) {
     if (g.selected === a.id) {
       D.rect(s.x + 5, top - 4, 7, 1, C.ink); D.rect(s.x + 6, top - 3, 5, 1, C.ink); D.rect(s.x + 7, top - 2, 3, 1, C.ink); D.rect(s.x + 8, top - 1, 1, 1, C.ink);
     } else if (a.isPlayer) {
-      D.rect(s.x + 7, top - 3, 3, 3, g.color);
+      D.rect(s.x + 6, top - 4, 5, 1, g.color); D.rect(s.x + 7, top - 3, 3, 2, g.color);
+    } else {
+      const tm = teamOf(g, a);
+      if (tm) D.rect(s.x + 7, top - 2, 3, 2, tm.color);
     }
   }
 
-  // tutorial: point at the room when the player should place something
   if (isHl(g, 'map')) {
     const on = Math.floor(performance.now() / 350) % 2 === 0;
-    D.outline(PX(1) - 1, PY(1) - 1, 11 * TILE + 2, 9 * TILE + 2, on ? '#D9A400' : '#F2D27A');
+    D.outline(PX(1) - 1, PY(1) - 1, (MAP_W - 2) * TILE + 2, (MAP_H - 2) * TILE + 2, on ? '#D9A400' : '#F2D27A');
   }
 
   drawGhost(app, ctx);

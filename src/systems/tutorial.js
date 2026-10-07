@@ -3,65 +3,77 @@ import { DATA } from '../data.js';
 import { toast } from './notify.js';
 import { sfx } from '../audio.js';
 
-export const REWARD = 100;
+export const REWARD = 200;
 const has = (g, t) => g.furniture.some((f) => f.type === t);
 const deskCount = (g) => g.furniture.filter((f) => DATA.furnById[f.type].desk).length;
+const open = (g, kind) => (g.windows || []).some((w) => w.kind === kind);
 
 function buildPath(g, tab, item) {
-  if (g.panel !== 'build') return ['nav-build'];
+  if (!open(g, 'build')) return ['nav-build'];
   if (g.buildTab !== tab) return ['tab-' + tab];
   if (g.tool && g.tool.id === item) return ['map'];
   return ['item-' + item];
 }
+function jobsPath(g, tab, target) {
+  if (!open(g, 'jobs')) return ['nav-jobs'];
+  if (g.jobsTab !== tab) return ['tab-' + tab];
+  return [target];
+}
 
 export const STEPS = [
   {
-    title: 'Open the Jobs board',
-    text: 'Clients post work here. Click Jobs at the bottom, or press J.',
-    done: (g) => g.panel === 'jobs' || g.jobs.length > 0 || g.doneJobs.length > 0,
-    targets: () => ['nav-jobs'],
-  },
-  {
-    title: 'Accept a job',
-    text: 'Pick any offer and click Accept. Smaller jobs (fewer pts) finish faster.',
-    done: (g) => g.jobs.length > 0 || g.doneJobs.length > 0,
-    targets: (g) => (g.panel !== 'jobs' ? ['nav-jobs'] : g.jobsTab !== 'offers' ? ['tab-offers'] : ['accept']),
-  },
-  {
-    title: 'Deliver your first job',
-    text: 'You walk to your desk and work by yourself. Speed up time with 2x or 4x at the top right.',
-    done: (g) => g.doneJobs.length > 0,
-    targets: () => ['speed'],
-  },
-  {
-    title: 'Buy a Coffee Machine',
-    text: 'Open Build, choose Needs, pick the Coffee Machine and click a free floor tile. Tired people work slowly.',
-    done: (g) => has(g, 'coffee'),
-    targets: (g) => buildPath(g, 'needs', 'coffee'),
-  },
-  {
-    title: 'Build a Toilet',
-    text: 'Same place: Build, Needs. Without one, everybody runs to the cafe downstairs.',
-    done: (g) => has(g, 'toilet'),
-    targets: (g) => buildPath(g, 'needs', 'toilet'),
-  },
-  {
-    title: 'Add a second desk',
-    text: 'Build, Work, then place a Desk. Every new person needs a desk of their own.',
+    title: 'Build two desks',
+    text: 'Your floor is empty. Open Build, pick Work and place two desks. Every employee needs one. You never work yourself.',
     done: (g) => deskCount(g) >= 2,
     targets: (g) => buildPath(g, 'work', 'desk_basic'),
   },
   {
     title: 'Hire your first employee',
-    text: 'Open Staff, switch to Applicants and click Hire. Traits marked ??? reveal themselves after a few days.',
-    done: (g) => g.agents.length >= 2,
-    targets: (g) => (g.panel !== 'staff' ? ['nav-staff'] : g.staffView != null ? ['back'] : g.staffTab !== 'applicants' ? ['tab-applicants'] : ['hire']),
+    text: 'Open Staff, go to Applicants and make an offer. Offer less than they ask and they may say no.',
+    done: (g) => g.stats.hires >= 1,
+    targets: (g) => (!open(g, 'staff') ? ['nav-staff'] : g.staffTab !== 'applicants' ? ['tab-applicants'] : ['offer']),
   },
   {
-    title: 'Deliver 3 jobs in total',
-    text: 'Keep accepting jobs. Click people to see what they think. Happy people do better work.',
-    done: (g) => g.stats.jobsDone >= 3,
-    targets: () => [],
+    title: 'Create a team',
+    text: 'Nobody works without a team. Open Teams and click New team.',
+    done: (g) => g.teams.length >= 1,
+    targets: (g) => (!open(g, 'teams') ? ['nav-teams'] : ['new-team']),
+  },
+  {
+    title: 'Put your employee in the team',
+    text: 'In the Teams window, click a name under "Not in a team" to add them to the selected team.',
+    done: (g) => g.teams.some((t) => t.members.length),
+    targets: (g) => (!open(g, 'teams') ? ['nav-teams'] : ['add-member']),
+  },
+  {
+    title: 'Accept a job',
+    text: 'Open Jobs and accept an offer. Check which skills it needs and who in your team has them.',
+    done: (g) => g.jobs.length > 0 || g.doneJobs.length > 0,
+    targets: (g) => jobsPath(g, 'offers', 'accept'),
+  },
+  {
+    title: 'Give the job to your team',
+    text: 'In Jobs, Active, click the Team button on the job until your team shows up.',
+    done: (g) => g.jobs.some((j) => j.team != null) || g.doneJobs.length > 0,
+    targets: (g) => jobsPath(g, 'active', 'job-team'),
+  },
+  {
+    title: 'Put someone on a task',
+    text: 'Each job has parts per skill. Click a name chip under a part to put that person on it. The number is their skill.',
+    done: (g) => g.agents.some((a) => a.task) || g.doneJobs.length > 0,
+    targets: (g) => jobsPath(g, 'active', 'task-chip'),
+  },
+  {
+    title: 'Coffee machine and toilet',
+    text: 'Build, Needs. Without them people leave for the cafe downstairs and nothing gets done.',
+    done: (g) => has(g, 'coffee') && has(g, 'toilet'),
+    targets: (g) => buildPath(g, 'needs', has(g, 'coffee') ? 'toilet' : 'coffee'),
+  },
+  {
+    title: 'Deliver your first job',
+    text: 'Speed up with 2x or 4x. When a part is done, give people a new task. Tired or stressed people: open their profile and send them on a break.',
+    done: (g) => g.doneJobs.length > 0,
+    targets: () => ['speed'],
   },
 ];
 
@@ -80,7 +92,7 @@ export function updateTutorial(g) {
   }
   if (t.step >= STEPS.length) {
     t.on = false;
-    toast(g, 'Tutorial complete. Grow the company, keep people happy, survive the drama.', 'green');
+    toast(g, 'Tutorial complete. Next: hire more people, hold meetings, rent more floors.', 'green');
   }
 }
 

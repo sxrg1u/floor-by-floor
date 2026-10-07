@@ -1,4 +1,4 @@
-# Floor by Floor (Prototyp M1–M5)
+# Floor by Floor (M1–M9)
 
 **Live spielen:** https://sxrg1u.github.io/floor-by-floor/
 
@@ -14,26 +14,38 @@ python -m http.server 5173
 
 Dann im Browser öffnen: http://localhost:5173
 
+## So spielt es sich
+
+Du bist der Chef und arbeitest nie selbst. Ohne deine Anweisungen passiert nichts:
+
+1. Die erste Etage ist gemietet, aber leer: Schreibtische, Küche und Toilette baust du selbst.
+2. Bewerber stellst du per Gehaltsangebot ein. Bietest du weniger, sagen sie vielleicht nein.
+3. Du bildest Teams und gibst jedem Job ein Team.
+4. Jobs bestehen aus Teilen je Skill, und du setzt die Leute auf die Teile. Ist ein Teil fertig, brauchen sie eine neue Aufgabe.
+5. Pausen und Feierabend steuerst du über Hausregeln oder per Hand. Wer zu lange unter Stress arbeitet, fällt mit Burnout aus.
+6. Gehaltserhöhungen und Beförderungen vergibst du selbst. Wer unterbezahlt ist oder übergangen wird, kündigt.
+
 ## Steuerung
 
 | Taste / Maus | Aktion |
 |---|---|
-| `+` / `-` | UI größer / kleiner (S, M, L, wird gespeichert) |
+| J S T B M P F G | Fenster: Jobs, Staff, Teams, Build, Meetings, Rules, Money, Goals |
+| 1 – 7 | Etage wechseln |
+| `+` / `-` | UI größer / kleiner |
 | Mausrad über der Karte | Zoom |
-| Ziehen, Pfeiltasten | Karte verschieben (auch mit Rechts- oder Mittelklick ziehen) |
+| Ziehen, Pfeiltasten | Karte verschieben |
 | Space | Pause |
-| J / S / B / F | Jobs / Staff / Build / Finance |
-| Esc | Werkzeug, Panel oder Auswahl schließen, sonst Pausenmenü |
-| Rechtsklick | Bau-Werkzeug abbrechen |
+| Esc | Werkzeug, Auswahl oder oberstes Fenster schließen, sonst Pausenmenü |
+
+Mehrere Fenster können gleichzeitig offen sein. Verschoben werden sie an der Titelleiste.
 
 ## Enthalten
 
-- **M1:** Pixel-Canvas, das sich an das Fenster anpasst, Kamera mit Zoom, Uhr mit Pause und 1×/2×/4×, Tag/Nacht
-- **M2:** Spielerfigur, Auftragsbrett, Arbeit, Geld, Ruf, Energie
-- **M3:** Bau-Modus mit Möbeln, Wänden, Türen und Verkaufen; ganze Etage mieten
-- **M4:** Bewerber einstellen, Bedürfnis-KI, Pathfinding, Skills mit Level-ups
-- **M5:** 12 Traits (teils versteckt als ???), Meinungen zu 8 Themen, Beziehungen (Freunde, Rivalen, Cliquen),
-  Smalltalk, Crush & Dating samt Trennungsdrama, Tratsch, Sabotage, Entscheidungs-Popups, Beziehungsnetz-Grafik
-- Geführtes Tutorial mit 8 Schritten, Spieler umschaltbar zwischen Work und Manage, Pixel-Sounds, eigener 5×7-Font
+- **M1–M4:** Pixel-Canvas, Kamera, Zeit, Tag/Nacht, Bau-Modus, Bedürfnis-KI, Pathfinding, Skills
+- **M5:** Traits (teils versteckt), Meinungen, Beziehungen, Cliquen, Crush & Dating, Tratsch, Beziehungsnetz
+- **M6:** Meetings am Meeting-Tisch mit Persuade, Promise, Snacks und Pull Rank; Delegieren an Leads mit Veto
+- **M7:** Bis zu 6 Etagen plus Penthouse, Aufzug zwischen den Etagen, Kredite, Ruf
+- **M8:** Satirische Events, 10 Meilensteine mit Freischaltungen, Firmenregeln, Karriere, Loyalität, Kündigungen, Burnout
+- **M9:** Hauptmenü mit Continue und Load, Autosave jeden Morgen, 3 Speicherslots, Chiptune-Musik, Einstellungen
 
-Inhalte (Branchen, Möbel, Namen, Traits, Themen) liegen in `data/*.json`.
+Inhalte liegen in `data/*.json`. Sprites, Sounds, Musik und Font werden im Code erzeugt.

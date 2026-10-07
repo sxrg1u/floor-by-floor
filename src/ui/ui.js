@@ -25,6 +25,7 @@ export function beginFrame() {
   prev = regions; regions = []; hot = 0;
   for (const r of prev) if (r.l > hot && inside(input.x, input.y, r)) hot = r.l;
   layer = 0; tip = null; ui.pointer = false; clip = null;
+  if (input.pressed) ui.focus = null; // a text field clicked this frame grabs focus again
 }
 export function endFrame() {
   input.pressed = input.released = input.rpressed = input.panPressed = false;
