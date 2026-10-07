@@ -1,6 +1,9 @@
 // Global constants: resolution, map, palette.
-export const W = 640;
-export const H = 360;
+// Logical resolution adapts to the window (see main.js resize). ES live bindings keep importers in sync.
+export let W = 640;
+export let H = 360;
+export function setResolution(w, h) { W = w; H = h; }
+
 export const TILE = 16;
 export const MAP_W = 36;
 export const MAP_H = 18;
@@ -9,8 +12,13 @@ export const SIM_HZ = 10; // sim ticks per real second at 1x; one tick = one gam
 export const TOP_H = 18;
 export const BOTTOM_H = 24;
 export const LEFT_W = 30;
-export const WORLD_X = LEFT_W + Math.floor((W - LEFT_W - MAP_W * TILE) / 2);
-export const WORLD_Y = TOP_H + Math.floor((H - TOP_H - BOTTOM_H - MAP_H * TILE) / 2);
+export const WORLD_PAD = 24; // empty pixels above row 0 in the world canvas (tall sprites, bubbles)
+
+// Screen rect the office map is shown in.
+export const VIEW = () => ({ x: LEFT_W, y: TOP_H, w: W - LEFT_W, h: H - TOP_H - BOTTOM_H });
+
+// UI size presets: target logical height in pixels (smaller = bigger UI).
+export const SIZES = { S: 400, M: 320, L: 270 };
 
 export const SPAWN = { x: 1, y: 8 }; // tile in front of the elevator
 
@@ -57,6 +65,7 @@ export const KIND = {
   blue: [C.blueBg, C.blue],
   green: [C.greenBg, C.green],
   yellow: [C.yellowBg, C.yellow],
+  pink: ['#F8E8EF', '#9C4A6B'],
   neutral: ['#EFEDE8', C.inkSoft],
 };
 

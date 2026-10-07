@@ -6,7 +6,7 @@ import { addFurniture, rebuildOcc, assignDesks, computeDeco } from './systems/bu
 import { refreshOffers } from './systems/jobs.js';
 import { refreshApplicants } from './systems/hiring.js';
 import { freshMonth } from './systems/economy.js';
-import { toast } from './systems/notify.js';
+import { startTutorial } from './systems/tutorial.js';
 
 function buildTiles() {
   // W wall, . floor, D door, L locked (not rented yet), E elevator
@@ -41,6 +41,7 @@ export function newGame(setup) {
     panel: null, tool: null, selected: null, modal: null, investorUsed: false,
     staticDirty: true, decoDirty: true, manageBonus: 1, ding: false,
     jobsTab: 'offers', staffTab: 'team', staffView: null, buildTab: 'work',
+    rel: {}, cliques: [], events: [], event: null, dramaUntil: 0, tut: null, cam: null,
   };
   const skills = Object.fromEntries(ind.skills.map((s) => [s, 3]));
   const player = makeAgent(g, { name: setup.name, isPlayer: true, look: setup.look, role: 'Founder', skills, salary: 0, arriveAt: 8 * 60 + 40 });
@@ -52,6 +53,7 @@ export function newGame(setup) {
   computeDeco(g);
   refreshOffers(g, true);
   refreshApplicants(g);
-  toast(g, `Welcome to ${setup.company}. Open Jobs and take your first contract.`, 'blue');
+  startTutorial(g, false);
+  g.modal = 'welcome';
   return g;
 }

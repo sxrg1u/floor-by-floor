@@ -1,20 +1,34 @@
-// Draws the office floor (tiles, furniture, people, day/night) and handles clicks on the map.
-import { C, TILE, MAP_W, MAP_H, WORLD_X, WORLD_Y, SPAWN } from '../config.js';
+// Draws the office floor into an offscreen world canvas (tiles, furniture, people, day/night),
+// then blits it through the camera. Also handles map input: select, pan, zoom, build tools.
+import { C, KIND, TILE, MAP_W, MAP_H, SPAWN, WORLD_PAD, VIEW } from '../config.js';
 import { DATA } from '../data.js';
 import * as D from './draw.js';
 import { furnSprite, chairSprite, charSprites, SCREENS, SPRITE_OY } from './sprites.js';
+import { cam, camPos, clampCam, tileAt, toScreen, zoomAt, WORLD_PX_W, WORLD_PX_H } from './camera.js';
 import { clock, darkness } from '../sim/time.js';
 import { input, worldFree, takeClick, setTooltip, ui } from '../ui/ui.js';
 import {
   canPlace, placeFurniture, furnitureAt, sellFurniture, wallLine, canWall, buildWalls, canDoor, makeDoor,
   canRemoveWall, removeWall, WALL_COST,
 } from '../systems/building.js';
-import { NEED_ICON } from '../sim/agents.js';
 import { fmtMoney } from '../systems/economy.js';
 import { toast } from '../systems/notify.js';
 import { sfx } from '../audio.js';
+import { isHl } from '../systems/tutorial.js';
 
+const PX = (tx) => tx * TILE;
+const PY = (ty) => ty * TILE + WORLD_PAD;
 const isWallish = (g, x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && (g.tiles[y][x] === 'W' || g.tiles[y][x] === 'E');
+
+let worldCanvas = null;
+function getWorldCanvas() {
+  if (!worldCanvas) {
+    worldCanvas = document.createElement('canvas');
+    worldCanvas.width = WORLD_PX_W;
+    worldCanvas.height = WORLD_PX_H;
+  }
+  return worldCanvas;
+}
 
 function buildStatic(g) {
   const c = g.staticCanvas || (g.staticCanvas = document.createElement('canvas'));
@@ -25,9 +39,7 @@ function buildStatic(g) {
     for (let tx = 0; tx < MAP_W; tx++) {
       const t = g.tiles[ty][tx];
       const X = tx * TILE, Y = ty * TILE;
-      if (t === '.' || t === 'D') {
-        r(X, Y, 16, 16, (tx + ty) & 1 ? C.floorB : C.floorA);
-      }
+      if (t === '.' || t === 'D') r(X, Y, 16, 16, (tx + ty) & 1 ? C.floorB : C.floorA);
       if (t === 'L') {
         r(X, Y, 16, 16, C.locked);
         for (let i = 0; i < 16; i++) for (let j = 0; j < 16; j++) if ((X + i + Y + j) % 6 === 0) r(X + i, Y + j, 1, 1, C.lockedLine);
@@ -62,37 +74,72 @@ function lockedCenter(g) {
   return maxx < 0 ? null : { x: (minx + maxx + 1) / 2, y: (miny + maxy + 1) / 2 };
 }
 
-export function mouseTile() {
-  return { x: Math.floor((input.x - WORLD_X) / TILE), y: Math.floor((input.y - WORLD_Y) / TILE) };
-}
-const overMap = () => input.x >= WORLD_X && input.y >= WORLD_Y && input.x < WORLD_X + MAP_W * TILE && input.y < WORLD_Y + MAP_H * TILE;
+const overView = () => { const v = VIEW(); return input.x >= v.x && input.y >= v.y && input.x < v.x + v.w && input.y < v.y + v.h; };
+const inMap = (t) => t.x >= 0 && t.y >= 0 && t.x < MAP_W && t.y < MAP_H;
 
-export function agentScreen(a, alpha) {
+// World-canvas position of an agent sprite (top-left).
+export function agentWorld(a, alpha) {
   const ix = a.px + (a.x - a.px) * alpha, iy = a.py + (a.y - a.py) * alpha;
   const seated = a.state === 'working';
-  return { x: Math.round(WORLD_X + ix * TILE), y: Math.round(WORLD_Y + iy * TILE - (seated ? 9 : 6)), ix, iy, seated };
+  return { x: Math.round(PX(ix)), y: Math.round(PY(iy) - (seated ? 9 : 6)), iy, seated };
+}
+
+export function agentScreen(g, a, alpha) {
+  const w = agentWorld(a, alpha);
+  const s = toScreen(g, w.x, w.y);
+  return { x: s.x, y: s.y, z: cam(g).z };
 }
 
 function agentAt(g, alpha) {
+  const t = toWorldPoint(g);
   let best = null, by = -1;
   for (const a of g.agents) {
     if (!a.present) continue;
-    const s = agentScreen(a, alpha);
-    if (input.x >= s.x + 3 && input.x < s.x + 13 && input.y >= s.y && input.y < s.y + 16 && s.iy > by) { best = a; by = s.iy; }
+    const s = agentWorld(a, alpha);
+    if (t.x >= s.x + 3 && t.x < s.x + 13 && t.y >= s.y && t.y < s.y + 16 && s.iy > by) { best = a; by = s.iy; }
   }
   return best;
+}
+function toWorldPoint(g) {
+  const c = camPos(g), v = VIEW();
+  return { x: c.x + (input.x - v.x) / c.z, y: c.y + (input.y - v.y) / c.z };
+}
+
+function startPan(g, left) {
+  const c = cam(g);
+  g.panDrag = { sx: input.x, sy: input.y, cx: c.x, cy: c.y, moved: false, left };
 }
 
 export function handleWorld(app) {
   const g = app.game;
-  if (!overMap() || !worldFree()) { if (input.released) g.drag = null; return; }
-  const t = mouseTile();
+  cam(g);
+  // ongoing camera drag
+  if (g.panDrag) {
+    const p = g.panDrag;
+    if (input.down || input.panDown) {
+      const dx = input.x - p.sx, dy = input.y - p.sy;
+      if (Math.abs(dx) + Math.abs(dy) > 3) p.moved = true;
+      if (p.moved) { const c = cam(g); c.x = p.cx - dx / c.z; c.y = p.cy - dy / c.z; clampCam(g); }
+      return;
+    }
+    if (!p.moved && p.left) {
+      const a = agentAt(g, app.alpha);
+      g.selected = a ? a.id : null;
+      if (a) sfx('blip');
+    }
+    g.panDrag = null;
+    return;
+  }
+  if (!overView() || !worldFree()) { if (input.released) g.drag = null; return; }
+  if (input.wheel) { zoomAt(g, input.x, input.y, input.wheel < 0 ? 1 : -1); input.wheel = 0; }
   const tool = g.tool;
   if (input.rpressed && tool) { g.tool = null; g.drag = null; return; }
+  if (input.panPressed) { startPan(g, false); return; }
+  const t = tileAt(g, input.x, input.y);
   if (!tool) {
     const a = agentAt(g, app.alpha);
-    if (a) { ui.pointer = true; setTooltip(a.name + (a.isPlayer ? ' (you)' : '')); }
-    if (takeClick()) { g.selected = a ? a.id : null; if (a) sfx('blip'); }
+    if (a) { ui.pointer = true; setTooltip(a.name + (a.isPlayer ? ' (you)' : '') + ' · click for details'); }
+    if (takeClick()) startPan(g, true);
     return;
   }
   if (tool.kind === 'furn') {
@@ -123,16 +170,15 @@ export function handleWorld(app) {
   }
 }
 
-function drawGhost(app) {
+function drawGhost(app, ctx) {
   const g = app.game;
   const tool = g.tool;
-  if (!tool || !overMap() || !worldFree()) return;
-  const t = mouseTile();
-  const X = (x) => WORLD_X + x * TILE, Y = (y) => WORLD_Y + y * TILE;
-  const ctx = D.getCtx();
+  if (!tool || !overView() || !worldFree() || g.panDrag) return;
+  const t = tileAt(g, input.x, input.y);
+  if (!inMap(t) && tool.kind !== 'wall') return;
   const mark = (x, y, ok) => {
-    ctx.globalAlpha = 0.55; D.rect(X(x), Y(y), 16, 16, ok ? '#CFE3CC' : '#F3C9CB'); ctx.globalAlpha = 1;
-    D.outline(X(x), Y(y), 16, 16, ok ? C.green : C.red);
+    ctx.globalAlpha = 0.55; D.rect(PX(x), PY(y), 16, 16, ok ? '#CFE3CC' : '#F3C9CB'); ctx.globalAlpha = 1;
+    D.outline(PX(x), PY(y), 16, 16, ok ? C.green : C.red);
   };
   if (tool.kind === 'furn') {
     const def = DATA.furnById[tool.id];
@@ -140,9 +186,10 @@ function drawGhost(app) {
     for (let y = 0; y < def.h; y++) for (let x = 0; x < def.w; x++) mark(t.x + x, t.y + y, ok);
     if (def.seat) mark(t.x + def.seat[0], t.y + def.seat[1], ok);
     ctx.globalAlpha = 0.75;
-    ctx.drawImage(furnSprite(def.id, def.w, def.h, g.color), X(t.x), Y(t.y) - SPRITE_OY);
-    if (def.seat) ctx.drawImage(chairSprite(), X(t.x + def.seat[0]), Y(t.y + def.seat[1]) - SPRITE_OY);
+    ctx.drawImage(furnSprite(def.id, def.w, def.h, g.color), PX(t.x), PY(t.y) - SPRITE_OY);
+    if (def.seat) ctx.drawImage(chairSprite(), PX(t.x + def.seat[0]), PY(t.y + def.seat[1]) - SPRITE_OY);
     ctx.globalAlpha = 1;
+    if (!ok) setTooltip(g.money < def.price ? 'Not enough money' : 'Does not fit here. Needs free floor, desks also need room for the chair below.');
   } else if (tool.kind === 'wall') {
     const line = g.drag ? wallLine(g.drag.x, g.drag.y, t.x, t.y) : [t];
     for (const p of line) mark(p.x, p.y, canWall(g, p.x, p.y));
@@ -161,29 +208,28 @@ function drawGhost(app) {
   }
 }
 
-export function drawWorld(app) {
+function drawScene(app, ctx) {
   const g = app.game;
   const alpha = app.alpha;
-  const ctx = D.getCtx();
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, WORLD_PX_W, WORLD_PX_H);
   if (g.staticDirty || !g.staticCanvas) buildStatic(g);
-  ctx.drawImage(g.staticCanvas, WORLD_X, WORLD_Y);
+  ctx.drawImage(g.staticCanvas, 0, WORLD_PAD);
   const c = clock(g.time);
   const dark = darkness(c.hour);
 
-  // windows on the outer top wall
   for (let tx = 1; tx < MAP_W - 1; tx++) {
     if (tx % 3 !== 1 || g.tiles[1][tx] === 'W') continue;
-    const X = WORLD_X + tx * TILE, Y = WORLD_Y;
+    const X = PX(tx), Y = PY(0);
     D.rect(X + 3, Y + 8, 10, 6, dark > 0.25 ? '#33404E' : '#E1F3FE');
     D.rect(X + 3, Y + 8, 10, 1, dark > 0.25 ? '#2A3542' : '#F2FAFF');
     D.rect(X + 7, Y + 8, 1, 6, C.wallFace);
   }
 
-  // build grid
   if (g.tool) {
     ctx.globalAlpha = 0.06;
-    for (let x = 0; x <= MAP_W; x++) D.rect(WORLD_X + x * TILE, WORLD_Y, 1, MAP_H * TILE, C.ink);
-    for (let y = 0; y <= MAP_H; y++) D.rect(WORLD_X, WORLD_Y + y * TILE, MAP_W * TILE, 1, C.ink);
+    for (let x = 0; x <= MAP_W; x++) D.rect(PX(x), PY(0), 1, MAP_H * TILE, C.ink);
+    for (let y = 0; y <= MAP_H; y++) D.rect(0, PY(y), MAP_W * TILE, 1, C.ink);
     ctx.globalAlpha = 1;
   }
 
@@ -191,18 +237,16 @@ export function drawWorld(app) {
   if (lc) {
     const s = 'FOR RENT';
     const w = D.tw(s) + 12;
-    const x = Math.round(WORLD_X + lc.x * TILE - w / 2), y = Math.round(WORLD_Y + lc.y * TILE - 8);
+    const x = Math.round(PX(lc.x) - w / 2), y = Math.round(PY(lc.y) - 8);
     D.card(x, y, w, 15, C.surface, C.border);
     D.text(s, x + 6, y + 4, C.muted);
   }
 
-  // floor-level furniture (rugs)
   for (const f of g.furniture) {
     const d = DATA.furnById[f.type];
-    if (d.walkable) ctx.drawImage(furnSprite(d.id, d.w, d.h, g.color), WORLD_X + f.x * TILE, WORLD_Y + f.y * TILE - SPRITE_OY);
+    if (d.walkable) ctx.drawImage(furnSprite(d.id, d.w, d.h, g.color), PX(f.x), PY(f.y) - SPRITE_OY);
   }
 
-  // depth-sorted entities
   const ents = [];
   for (const f of g.furniture) {
     const d = DATA.furnById[f.type];
@@ -212,20 +256,19 @@ export function drawWorld(app) {
   }
   for (const a of g.agents) {
     if (!a.present) continue;
-    const s = agentScreen(a, alpha);
+    const s = agentWorld(a, alpha);
     ents.push({ z: s.iy + (s.seated ? 0.3 : 0.1), k: 1, a, s });
   }
   ents.sort((p, q) => p.z - q.z || p.k - q.k);
   const walkFrame = 1 + (Math.floor(app.frame / 8) % 2);
   for (const e of ents) {
-    if (e.f) ctx.drawImage(furnSprite(e.d.id, e.d.w, e.d.h, g.color), WORLD_X + e.f.x * TILE, WORLD_Y + e.f.y * TILE - SPRITE_OY);
-    else if (e.chair) ctx.drawImage(chairSprite(), WORLD_X + e.x * TILE, WORLD_Y + e.y * TILE - SPRITE_OY);
+    if (e.f) ctx.drawImage(furnSprite(e.d.id, e.d.w, e.d.h, g.color), PX(e.f.x), PY(e.f.y) - SPRITE_OY);
+    else if (e.chair) ctx.drawImage(chairSprite(), PX(e.x), PY(e.y) - SPRITE_OY);
     else {
       const a = e.a, s = e.s;
       const spr = charSprites(a.look);
-      if (s.seated) {
-        ctx.drawImage(spr.up[0], 0, 0, 16, 12, s.x, s.y, 16, 12);
-      } else {
+      if (s.seated) ctx.drawImage(spr.up[0], 0, 0, 16, 12, s.x, s.y, 16, 12);
+      else {
         D.rect(s.x + 4, s.y + 15, 8, 2, 'rgba(47,52,55,0.10)');
         const fr = a.moving && !g.paused ? walkFrame : 0;
         ctx.drawImage(spr[a.dir][fr], s.x, s.y);
@@ -233,38 +276,35 @@ export function drawWorld(app) {
     }
   }
 
-  // night
   if (dark > 0.01) {
     ctx.globalAlpha = dark;
-    D.rect(WORLD_X, WORLD_Y, MAP_W * TILE, MAP_H * TILE, C.night);
+    D.rect(0, PY(0), MAP_W * TILE, MAP_H * TILE, C.night);
     ctx.globalAlpha = 1;
     for (const f of g.furniture) {
       const d = DATA.furnById[f.type];
-      if (d.light) {
-        ctx.globalAlpha = dark * 0.5;
-        D.rect(WORLD_X + f.x * TILE - 16, WORLD_Y + f.y * TILE - 16, 48, 48, '#FBF3DB');
-        D.rect(WORLD_X + f.x * TILE - 8, WORLD_Y + f.y * TILE - 8, 32, 32, '#FBF3DB');
-        ctx.globalAlpha = 1;
-        D.rect(WORLD_X + f.x * TILE + 4, WORLD_Y + f.y * TILE - 8, 8, 6, '#FBF3DB');
-      }
+      if (!d.light) continue;
+      ctx.globalAlpha = dark * 0.5;
+      D.rect(PX(f.x) - 16, PY(f.y) - 16, 48, 48, '#FBF3DB');
+      D.rect(PX(f.x) - 8, PY(f.y) - 8, 32, 32, '#FBF3DB');
+      ctx.globalAlpha = 1;
+      D.rect(PX(f.x) + 4, PY(f.y) - 8, 8, 6, '#FBF3DB');
     }
     for (const a of g.agents) {
       if (!a.present || a.state !== 'working' || a.desk == null) continue;
       const f = g.furnById[a.desk];
-      for (const r of SCREENS[f.type] || []) D.rect(WORLD_X + f.x * TILE + r[0], WORLD_Y + f.y * TILE + r[1], r[2], r[3], '#BFDDEE');
+      for (const r of SCREENS[f.type] || []) D.rect(PX(f.x) + r[0], PY(f.y) + r[1], r[2], r[3], '#BFDDEE');
     }
   }
 
-  // bubbles and markers
   for (const a of g.agents) {
     if (!a.present) continue;
-    const s = agentScreen(a, alpha);
+    const s = agentWorld(a, alpha);
     let top = s.y - 2;
     if (a.bubble) {
-      const [bg, fg] = a.bubble.kind === 'red' ? [C.redBg, C.red] : [C.blueBg, C.blue];
+      const [bg, fg] = KIND[a.bubble.kind] || KIND.blue;
       D.card(s.x + 2, s.y - 12, 11, 11, bg, fg);
       D.rect(s.x + 7, s.y - 1, 1, 1, fg);
-      D.icon(NEED_ICON[a.bubble.need] || a.bubble.icon, s.x + 4, s.y - 10, fg);
+      D.icon(a.bubble.icon, s.x + 4, s.y - 10, fg);
       top = s.y - 14;
     }
     if (g.selected === a.id) {
@@ -274,5 +314,26 @@ export function drawWorld(app) {
     }
   }
 
-  drawGhost(app);
+  // tutorial: point at the room when the player should place something
+  if (isHl(g, 'map')) {
+    const on = Math.floor(performance.now() / 350) % 2 === 0;
+    D.outline(PX(1) - 1, PY(1) - 1, 11 * TILE + 2, 9 * TILE + 2, on ? '#D9A400' : '#F2D27A');
+  }
+
+  drawGhost(app, ctx);
+}
+
+export function drawWorld(app) {
+  const g = app.game;
+  const main = D.getCtx();
+  const wc = getWorldCanvas();
+  const wctx = wc.getContext('2d');
+  wctx.imageSmoothingEnabled = false;
+  D.setCtx(wctx);
+  try { drawScene(app, wctx); } finally { D.setCtx(main); }
+  const c = camPos(g), v = VIEW();
+  main.save();
+  main.beginPath(); main.rect(v.x, v.y, v.w, v.h); main.clip();
+  main.drawImage(wc, Math.round(v.x - c.x * c.z), Math.round(v.y - c.y * c.z), WORLD_PX_W * c.z, WORLD_PX_H * c.z);
+  main.restore();
 }

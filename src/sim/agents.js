@@ -6,6 +6,7 @@ import { bfs, pathFrom, walkable } from './pathfinding.js';
 import { pickJob, addWork } from '../systems/jobs.js';
 import { toast } from '../systems/notify.js';
 import { sfx } from '../audio.js';
+import { buildMods, tryChat, chatting, flavorThought, interact } from './personality.js';
 
 export const NEED_KEYS = ['energy', 'hunger', 'bladder', 'social', 'fun', 'stress'];
 export const NEED_LABEL = { energy: 'Energy', hunger: 'Hunger', bladder: 'Bladder', social: 'Social', fun: 'Fun', stress: 'Stress' };
@@ -28,14 +29,17 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 export const firstName = (a) => a.name.split(' ')[0];
 
 export function makeAgent(g, o) {
+  const mods = buildMods(o.traits || []);
   return {
+    traits: o.traits ? [...o.traits] : [], known: o.known ? [...o.known] : [], opinions: o.opinions ? { ...o.opinions } : null,
+    mods, socialMood: 0, chem: 1, partner: null, crush: null, chatWith: null, daysWorked: 0, heartbreak: 0, dayOff: -1,
     id: g.nextId++, name: o.name, isPlayer: !!o.isPlayer, look: o.look, role: o.role,
     mainSkill: o.mainSkill || null, skills: { ...o.skills }, xp: {}, salary: o.salary || 0,
     desk: null, x: SPAWN.x, y: SPAWN.y, px: SPAWN.x, py: SPAWN.y, path: [], dir: 'down', moving: false,
     state: 'away', target: null, timer: 0, wait: 0,
     needs: { energy: 88, hunger: 80, bladder: 85, social: 70, fun: 70, stress: 10 },
     present: false, mood: 70, thought: '', thoughtT: 0, bubble: null, activity: 'Not in yet', mode: 'work',
-    arriveAt: o.arriveAt ?? (WORK_START - 25 + Math.floor(Math.random() * 45)),
+    arriveAt: (o.arriveAt ?? (WORK_START - 25 + Math.floor(Math.random() * 45))) + mods.arrive,
     lastDay: -1, outUntil: 0, outNeed: null, cool: {}, forced: null,
   };
 }
@@ -44,7 +48,7 @@ function think(a, text, t = 220) { a.thought = text; a.thoughtT = t; }
 
 export function moodOf(a, g) {
   const n = a.needs;
-  let m = (n.energy + n.hunger + n.bladder + n.social + n.fun + (100 - n.stress)) / 6;
+  let m = (n.energy + n.hunger + n.bladder + n.social + n.fun + (100 - n.stress)) / 6 + (a.socialMood || 0);
   const desk = a.desk != null ? g.furnById[a.desk] : null;
   if (desk) m += desk.deco || 0; else if (!a.isPlayer) m -= 10;
   return clamp(m);
@@ -80,6 +84,7 @@ export function spawnAgent(a, g) {
 }
 
 function morning(a) {
+  a.daysWorked++;
   const n = a.needs;
   n.energy = rnd(80, 95); n.hunger = rnd(70, 88); n.bladder = rnd(75, 95);
   n.social = Math.max(n.social, 55); n.fun = Math.max(n.fun, 55); n.stress = Math.max(0, n.stress - 45);
@@ -255,6 +260,7 @@ function decide(a, g) {
     fallback(a, g, u);
     if (a.state !== 'idle') return;
   }
+  if (tryChat(a, g)) return;
   if (a.isPlayer && a.mode === 'manage') { managerWalk(a, g); return; }
   if (a.desk != null) {
     const f = g.furnById[a.desk];
@@ -273,13 +279,20 @@ function using(a, g) {
   if (!f) { a.state = 'idle'; a.target = null; return; }
   const d = DATA.furnById[f.type];
   const n = a.needs;
-  for (const k in d.use.restore) n[k] = clamp(n[k] + d.use.restore[k]);
-  if (f.users.length > 1) n.social = clamp(n.social + 1.2);
+  for (const k in d.use.restore) n[k] = clamp(n[k] + d.use.restore[k] * (a.mods.restore[k] || 1));
+  if (f.users.length > 1) {
+    n.social = clamp(n.social + 1.2);
+    // people sharing the cooler, fridge or sofa get to know each other
+    if (a.timer % 8 === 0) for (const id of f.users) {
+      const b = g.agents.find((x) => x.id === id);
+      if (b && b !== a && b.id > a.id && b.state === 'using') interact(g, a, b, 1);
+    }
+  }
   if (--a.timer <= 0) { release(a, g); a.state = 'idle'; a.target = null; a.wait = 2; }
 }
 
 function gainXp(a, g, skill, units) {
-  a.xp[skill] = (a.xp[skill] || 0) + units;
+  a.xp[skill] = (a.xp[skill] || 0) + units * a.mods.xp;
   const lvl = a.skills[skill] || 1;
   if (lvl < 10 && a.xp[skill] >= 700 * lvl) {
     a.skills[skill] = lvl + 1; a.xp[skill] = 0;
@@ -300,19 +313,19 @@ function working(a, g) {
     const q = 0.5 + a.mood / 100;
     const sk = a.skills[job.skill] || 1;
     const bonus = a.isPlayer ? 1 : g.manageBonus;
-    const units = sk * q * desk.quality * 0.25 * bonus;
-    addWork(g, job, a, units, q);
+    const units = sk * q * desk.quality * 0.25 * bonus * a.mods.output * (a.chem || 1);
+    addWork(g, job, a, units, Math.min(1.6, q + a.mods.quality));
     gainXp(a, g, job.skill, units);
-    n.stress = clamp(n.stress + 0.05 * desk.stress);
+    n.stress = clamp(n.stress + 0.05 * desk.stress * a.mods.stress);
     n.energy = clamp(n.energy - 0.02);
     a.activity = 'Working on ' + job.name;
     a.workingNow = true;
-    if (!a.thoughtT && Math.random() < 0.004) think(a, a.mood > 55 ? pick(WORK_OK) : pick(WORK_BAD));
+    if (!a.thoughtT && Math.random() < 0.004) think(a, flavorThought(a) || (a.mood > 55 ? pick(WORK_OK) : pick(WORK_BAD)));
   } else {
     a.activity = 'Waiting for work';
     n.fun = clamp(n.fun + 0.03);
     n.stress = clamp(n.stress - 0.03);
-    if (!a.thoughtT && Math.random() < 0.004) think(a, pick(IDLE));
+    if (!a.thoughtT && Math.random() < 0.004) think(a, flavorThought(a) || pick(IDLE));
   }
   if (++a.timer % 15 === 0 && urgentNeed(a, g)) a.state = 'idle';
 }
@@ -333,12 +346,14 @@ export function updateAgent(a, g) {
       return;
     }
     if (c.day !== a.lastDay && c.minute >= a.arriveAt && c.minute < WORK_END - 60) {
-      a.lastDay = c.day; morning(a); spawnAgent(a, g);
+      a.lastDay = c.day;
+      if (a.dayOff === c.day) { a.activity = 'Day off'; return; }
+      morning(a); spawnAgent(a, g);
     }
     return;
   }
   const n = a.needs;
-  for (const k in DECAY) n[k] = clamp(n[k] - DECAY[k]);
+  for (const k in DECAY) n[k] = clamp(n[k] - DECAY[k] * (a.mods.decay[k] || 1));
   if (a.state !== 'working') n.stress = clamp(n.stress - 0.03);
   a.mood = moodOf(a, g);
   if (a.state !== 'leaving' && (c.minute >= WORK_END || c.minute < 6 * 60 || a.forced === 'home')) {
@@ -350,6 +365,7 @@ export function updateAgent(a, g) {
     case 'walking': case 'leaving': step(a, g); break;
     case 'using': using(a, g); break;
     case 'working': working(a, g); break;
+    case 'chatting': chatting(a, g); break;
     default: decide(a, g);
   }
   if (a.thoughtT > 0) a.thoughtT--;

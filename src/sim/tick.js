@@ -1,6 +1,7 @@
 // One fixed simulation step (= one game minute).
 import { clock } from './time.js';
 import { updateAgent, playSounds } from './agents.js';
+import { socialHour, socialDay } from './personality.js';
 import { onNewDay } from '../systems/economy.js';
 import { checkJobs } from '../systems/jobs.js';
 import { computeDeco } from '../systems/building.js';
@@ -8,7 +9,8 @@ import { computeDeco } from '../systems/building.js';
 export function tick(g) {
   const before = clock(g.time).day;
   g.time++;
-  if (clock(g.time).day !== before) onNewDay(g);
+  if (clock(g.time).day !== before) { onNewDay(g); socialDay(g); }
+  if (g.time % 60 === 0) socialHour(g);
   if (g.decoDirty) computeDeco(g);
   const p = g.agents.find((a) => a.isPlayer);
   g.manageBonus = p && p.present && p.mode === 'manage' ? 1.15 : 1;

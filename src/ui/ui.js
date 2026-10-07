@@ -5,7 +5,17 @@ import * as D from '../render/draw.js';
 import { hasGlyph } from '../render/font.js';
 import { sfx } from '../audio.js';
 
-export const input = { x: -100, y: -100, down: false, pressed: false, released: false, rpressed: false, wheel: 0, keys: [], typed: [] };
+export const input = {
+  x: -100, y: -100, down: false, pressed: false, released: false, rpressed: false,
+  panDown: false, panPressed: false, wheel: 0, keys: [], typed: [], held: new Set(),
+};
+
+// Pulsing yellow outline used by the tutorial to point at things.
+export function highlight(x, y, w, h) {
+  const on = Math.floor(performance.now() / 350) % 2 === 0;
+  D.outline(x - 2, y - 2, w + 4, h + 4, on ? '#D9A400' : '#F2D27A');
+  D.outline(x - 3, y - 3, w + 6, h + 6, on ? '#F2D27A' : '#FBF3DB');
+}
 export const ui = { focus: null, pointer: false, scroll: {}, scrollH: {} };
 
 let regions = [], prev = [], layer = 0, hot = 0, consumed = false, tip = null, clip = null;
@@ -17,7 +27,7 @@ export function beginFrame() {
   layer = 0; tip = null; ui.pointer = false; clip = null;
 }
 export function endFrame() {
-  input.pressed = input.released = input.rpressed = false;
+  input.pressed = input.released = input.rpressed = input.panPressed = false;
   input.wheel = 0; input.keys.length = 0; input.typed.length = 0; consumed = false;
 }
 export function setLayer(l) { layer = l; }
@@ -99,6 +109,7 @@ export function button(x, y, w, h, label, o = {}) {
   if (o.icon) { D.icon(o.icon, cx, ty, o.iconColor && !dis ? o.iconColor : fg); cx += iw + gap; }
   if (label) { D.text(label, cx, ty, fg); cx += lw; }
   if (o.kbd) kbd(cx + 4, ty - 2, o.kbd);
+  if (o.hl) highlight(x, y, w, h);
   const c = !dis && click(x, y, w, h);
   if (c && o.sound !== false) sfx('click');
   return c;
@@ -155,7 +166,7 @@ export function label(s, x, y) { D.text(String(s).toUpperCase(), x, y, C.muted);
 export function scrollArea(id, x, y, w, h, draw) {
   const maxS = Math.max(0, (ui.scrollH[id] || 0) - h);
   const wv = wheelIn(x, y, w, h);
-  let s = Math.max(0, Math.min(maxS, (ui.scroll[id] || 0) + wv * 24));
+  let s = Math.max(0, Math.min(maxS, (ui.scroll[id] || 0) + Math.round(wv * 30)));
   ui.scroll[id] = s;
   const ctx = D.getCtx();
   ctx.save();

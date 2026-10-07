@@ -1,0 +1,10 @@
+[
+  { "id": "remote", "name": "Remote Work", "pro": "Remote work is the future.", "con": "Remote work kills teams." },
+  { "id": "overtime", "name": "Overtime", "pro": "Overtime builds character.", "con": "Overtime is theft." },
+  { "id": "risk", "name": "Risk", "pro": "Go big or go home.", "con": "Slow and steady wins." },
+  { "id": "moneyfun", "name": "Money vs. Fun", "pro": "Fun first, money later.", "con": "Money first. Fun is for weekends." },
+  { "id": "openoffice", "name": "Open Office", "pro": "Open offices spark ideas.", "con": "Open offices are a cry for help." },
+  { "id": "snacks", "name": "Free Snacks", "pro": "Free snacks are a human right.", "con": "Snacks are a distraction." },
+  { "id": "dresscode", "name": "Dress Code", "pro": "A tie means business.", "con": "Hoodies only. Forever." },
+  { "id": "ai", "name": "AI Tools", "pro": "AI will do half my job.", "con": "AI tools are a fad." }
+]

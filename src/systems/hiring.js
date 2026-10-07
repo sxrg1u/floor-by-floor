@@ -4,6 +4,7 @@ import { HAIRS, SKINS, OUTFITS, HAIR_STYLES } from '../config.js';
 import { clock, WORK_START, WORK_END } from '../sim/time.js';
 import { makeAgent, spawnAgent, removeAgent, firstName } from '../sim/agents.js';
 import { assignDesks } from './building.js';
+import { genPersonality, initRelations, onFired } from '../sim/personality.js';
 import { toast } from './notify.js';
 import { sfx } from '../audio.js';
 
@@ -22,7 +23,11 @@ export function genApplicant(g) {
   const skills = {};
   for (const s of ind.skills) skills[s] = s === role.skill ? main : clamp(1 + rint(Math.max(1, main - 1)), 1, 10);
   const salary = Math.round((1300 + main * 450 + rint(400) - 150) / 50) * 50;
-  return { id: g.nextId++, name: randomName(), role: role.name, mainSkill: role.skill, skills, salary, look: randomLook() };
+  // avoid two people with the same first name in one office
+  const taken = new Set([...g.agents, ...g.applicants].map((p) => p.name.split(' ')[0]));
+  let name = randomName();
+  for (let i = 0; i < 20 && taken.has(name.split(' ')[0]); i++) name = randomName();
+  return { id: g.nextId++, name, role: role.name, mainSkill: role.skill, skills, salary, look: randomLook(), ...genPersonality() };
 }
 
 export function refreshApplicants(g) {
@@ -33,6 +38,7 @@ export function refreshApplicants(g) {
 export function hire(g, ap) {
   const a = makeAgent(g, ap);
   g.agents.push(a);
+  initRelations(g, a);
   g.applicants = g.applicants.filter((x) => x !== ap);
   assignDesks(g);
   const c = clock(g.time);
@@ -45,6 +51,7 @@ export function hire(g, ap) {
 
 export function fire(g, a) {
   if (a.isPlayer) return;
+  onFired(g, a);
   removeAgent(g, a);
   for (const j of g.jobs) if (j.team) j.team = j.team.filter((id) => id !== a.id);
   if (g.selected === a.id) g.selected = null;
