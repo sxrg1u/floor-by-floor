@@ -1,0 +1,123 @@
+[
+  {
+    "id": "game",
+    "name": "Game Studio",
+    "blurb": "Ship games. Fix bugs. Ship again.",
+    "icon": "desk_pc",
+    "skills": ["Code", "Art", "Design"],
+    "roles": [
+      { "name": "Programmer", "skill": "Code" },
+      { "name": "Artist", "skill": "Art" },
+      { "name": "Game Designer", "skill": "Design" },
+      { "name": "QA Tester", "skill": "Design" }
+    ],
+    "companyNames": ["Pixel Pickle Games", "Soft Reset Studio", "Couch Co-op Ltd.", "Respawn Point", "Ninth Life Games"],
+    "clients": ["Pocketfun Mobile", "Grimtide Publishing", "Lumen Interactive", "Rusty Anchor Games", "Kidbrain Edu", "Starlane Arcade"],
+    "jobs": [
+      { "name": "Bugfix Contract", "skill": "Code", "size": 0.8 },
+      { "name": "Mobile Puzzle Game", "skill": "Design", "size": 1.4 },
+      { "name": "Sprite Pack", "skill": "Art", "size": 1.0 },
+      { "name": "Port to Smart Fridge", "skill": "Code", "size": 1.6 },
+      { "name": "Level Design Sprint", "skill": "Design", "size": 1.1 },
+      { "name": "Indie Hit (Probably)", "skill": "Art", "size": 2.2 },
+      { "name": "Loot Box Rework", "skill": "Design", "size": 1.3 },
+      { "name": "Trailer Animation", "skill": "Art", "size": 1.2 }
+    ]
+  },
+  {
+    "id": "ad",
+    "name": "Ad Agency",
+    "blurb": "Sell anything to anyone. Bigger logo optional.",
+    "icon": "whiteboard",
+    "skills": ["Copy", "Design", "Accounts"],
+    "roles": [
+      { "name": "Copywriter", "skill": "Copy" },
+      { "name": "Designer", "skill": "Design" },
+      { "name": "Account Manager", "skill": "Accounts" }
+    ],
+    "companyNames": ["Loud & Clear", "Big Logo Agency", "Brightside Creative", "Hook Line Media", "Third Draft"],
+    "clients": ["Brightsmile Dental", "Okafor Motors", "Nordlicht Coffee", "Hollis & Vane Insurance", "Peppermill Foods", "CityGym"],
+    "jobs": [
+      { "name": "Logo Redesign", "skill": "Design", "size": 0.8 },
+      { "name": "Make the Logo Bigger", "skill": "Design", "size": 0.5 },
+      { "name": "TV Spot", "skill": "Copy", "size": 1.8 },
+      { "name": "Social Campaign", "skill": "Copy", "size": 1.1 },
+      { "name": "Billboard Series", "skill": "Design", "size": 1.3 },
+      { "name": "Rebrand Pitch", "skill": "Accounts", "size": 1.0 },
+      { "name": "Influencer Deal", "skill": "Accounts", "size": 1.2 },
+      { "name": "Slogan Workshop", "skill": "Copy", "size": 0.7 }
+    ]
+  },
+  {
+    "id": "tech",
+    "name": "Tech Startup",
+    "blurb": "Disrupt something. Anything. Please.",
+    "icon": "desk_pro",
+    "skills": ["Dev", "Product", "Sales"],
+    "roles": [
+      { "name": "Developer", "skill": "Dev" },
+      { "name": "Product Manager", "skill": "Product" },
+      { "name": "Sales Rep", "skill": "Sales" }
+    ],
+    "companyNames": ["Synergetic Labs", "Cloudnine.io", "Pivotly", "Stealth Mode Inc.", "Blue Ocean Apps"],
+    "clients": ["Hanover Logistics", "Mintleaf Bank", "Grain & Co.", "Velo Rentals", "Ashworth Clinic", "Parcelbird"],
+    "jobs": [
+      { "name": "Landing Page", "skill": "Dev", "size": 0.7 },
+      { "name": "Booking App", "skill": "Dev", "size": 1.6 },
+      { "name": "\"AI Integration\"", "skill": "Dev", "size": 1.4 },
+      { "name": "Product Roadmap", "skill": "Product", "size": 0.9 },
+      { "name": "Pivot Strategy", "skill": "Product", "size": 1.2 },
+      { "name": "Enterprise Pilot", "skill": "Sales", "size": 1.5 },
+      { "name": "Blockchain Feasibility", "skill": "Product", "size": 1.0 },
+      { "name": "Dashboard Rewrite", "skill": "Dev", "size": 1.2 }
+    ]
+  },
+  {
+    "id": "law",
+    "name": "Law Firm",
+    "blurb": "Billable hours, in six-minute increments.",
+    "icon": "trophy",
+    "skills": ["Law", "Research", "Admin"],
+    "roles": [
+      { "name": "Lawyer", "skill": "Law" },
+      { "name": "Paralegal", "skill": "Research" },
+      { "name": "Secretary", "skill": "Admin" }
+    ],
+    "companyNames": ["Hargrove & Finch", "Pendleton Legal", "Marsh, Marsh & Marsh", "Objection LLP", "Brief & Partners"],
+    "clients": ["Mr. Petrov", "Okonkwo Holdings", "Lindqvist Family", "Harbor Dock Union", "Bellmont Hotel", "Mrs. Albescu"],
+    "jobs": [
+      { "name": "Contract Review", "skill": "Law", "size": 0.8 },
+      { "name": "Lawsuit", "skill": "Law", "size": 2.0 },
+      { "name": "Divorce Settlement", "skill": "Law", "size": 1.2 },
+      { "name": "Patent Search", "skill": "Research", "size": 1.0 },
+      { "name": "Due Diligence", "skill": "Research", "size": 1.5 },
+      { "name": "Parking Ticket Appeal", "skill": "Admin", "size": 0.4 },
+      { "name": "Paperwork Mountain", "skill": "Admin", "size": 1.1 },
+      { "name": "Neighbor Hedge Dispute", "skill": "Law", "size": 0.6 }
+    ]
+  },
+  {
+    "id": "bakery",
+    "name": "Bakery Chain HQ",
+    "blurb": "Run an empire of croissants from a desk.",
+    "icon": "fridge",
+    "skills": ["Baking", "Marketing", "Logistics"],
+    "roles": [
+      { "name": "Baker R&D", "skill": "Baking" },
+      { "name": "Marketing", "skill": "Marketing" },
+      { "name": "Logistics", "skill": "Logistics" }
+    ],
+    "companyNames": ["Crumb Collective", "Rise & Co.", "Second Breakfast HQ", "Golden Crust Group", "Proof Positive"],
+    "clients": ["Rosa's Cafe", "Station Kiosks Ltd.", "Hartmann Supermarkets", "Wedding Planner Mia", "Tidewater Hotels", "School District 7"],
+    "jobs": [
+      { "name": "Recipe Development", "skill": "Baking", "size": 1.0 },
+      { "name": "Franchise Deal", "skill": "Logistics", "size": 1.8 },
+      { "name": "Gluten-Free Line", "skill": "Baking", "size": 1.3 },
+      { "name": "Seasonal Campaign", "skill": "Marketing", "size": 1.0 },
+      { "name": "Delivery Route Plan", "skill": "Logistics", "size": 0.9 },
+      { "name": "Croissant Rebrand", "skill": "Marketing", "size": 0.7 },
+      { "name": "Wedding Cake Pipeline", "skill": "Baking", "size": 1.5 },
+      { "name": "Supermarket Listing", "skill": "Logistics", "size": 1.2 }
+    ]
+  }
+]
